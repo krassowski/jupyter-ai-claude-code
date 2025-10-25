@@ -1,6 +1,7 @@
+import os
 from typing import Dict, Any, List, Optional, AsyncIterator
 
-from jupyter_ai.personas.base_persona import BasePersona, PersonaDefaults
+from jupyter_ai_persona_manager import BasePersona, PersonaDefaults
 from jupyterlab_chat.models import Message
 
 from claude_code_sdk import (
@@ -27,6 +28,9 @@ TOOL_PARAM_MAPPING = {
     'WebFetch': 'url',
     'WebSearch': 'query',
 }
+
+# Path to avatar file in this package
+AVATAR_PATH = os.path.join(os.path.dirname(__file__), "static", "claude.svg")
 
 PROMPT_TEMPLATE = """
 {{body}}
@@ -101,7 +105,7 @@ class ClaudeCodePersona(BasePersona):
         """Return default configuration for the Claude Code persona."""
         return PersonaDefaults(
             name="Claude",
-            avatar_path="/files/.jupyter/claude.svg",
+            avatar_path=AVATAR_PATH,
             description="Claude Code",
             system_prompt="...",
         )
