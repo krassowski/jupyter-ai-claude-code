@@ -1,96 +1,20 @@
 import os
-from typing import Dict, Any, List, Optional, AsyncIterator
+from typing import Dict, List, AsyncIterator
+import functools
 
 from jupyter_ai_persona_manager import BasePersona, PersonaDefaults
 from jupyterlab_chat.models import Message
 
-from claude_code_sdk import (
-    query, ClaudeCodeOptions,
-    Message, SystemMessage, AssistantMessage, ResultMessage,
-    TextBlock, ToolUseBlock
-)
+from claude_code_sdk import query, ClaudeCodeOptions, AssistantMessage
+from claude_code_sdk.types import McpHttpServerConfig
 
 
-OMIT_INPUT_ARGS = ['content']
+from jupyter_server.serverapp import ServerApp
 
-TOOL_PARAM_MAPPING = {
-    'Task': 'description',
-    'Bash': 'command',
-    'Glob': 'pattern',
-    'Grep': 'pattern',
-    'LS': 'path',
-    'Read': 'file_path',
-    'Edit': 'file_path',
-    'MultiEdit': 'file_path',
-    'Write': 'file_path',
-    'NotebookRead': 'notebook_path',
-    'NotebookWrite': 'notebook_path',
-    'WebFetch': 'url',
-    'WebSearch': 'query',
-}
+from .templates import ClaudeCodeTemplateManager
 
-# Path to avatar file in this package
+
 AVATAR_PATH = os.path.join(os.path.dirname(__file__), "static", "claude.svg")
-
-PROMPT_TEMPLATE = """
-{{body}}
-
-The user has selected the following files as attachements:
-
-
-"""
-
-def input_dict_to_str(d: Dict[str, Any]) -> str:
-    """Convert input dictionary to string representation, omitting specified args."""
-    args = []
-    for k, v in d.items():
-        if k not in OMIT_INPUT_ARGS:
-            args.append(f"{k}={v}")
-    return ', '.join(args)
-
-
-def tool_to_str(block: ToolUseBlock, persona_instance=None) -> str:
-    """Convert a ToolUseBlock to its string representation."""
-    results = []
-    
-    if block.name == 'TodoWrite':
-        block_id = block.id if hasattr(block, 'id') else str(hash(str(block.input)))
-        
-        if persona_instance and block_id in persona_instance._printed_todowrite_blocks:
-            return ""
-        
-        if persona_instance:
-            persona_instance._printed_todowrite_blocks.add(block_id)
-        
-        todos = block.input.get('todos', [])
-        results.append('TodoWrite()')
-        for todo in todos:
-            content = todo.get('content')
-            if content:
-                results.append(f"* {content}")
-    elif block.name in TOOL_PARAM_MAPPING:
-        param_key = TOOL_PARAM_MAPPING[block.name]
-        param_value = block.input.get(param_key, '')
-        results.append(f"🛠️ {block.name}({param_value})")
-    else:
-        results.append(f"🛠️ {block.name}({input_dict_to_str(block.input)})")
-    
-    return '\n'.join(results)
-
-
-def claude_message_to_str(message, persona_instance=None) -> Optional[str]:
-    """Convert a Claude Message to a string by extracting text content."""
-    text_parts = []
-    for block in message.content:
-        if isinstance(block, TextBlock):
-            text_parts.append(block.text)
-        elif isinstance(block, ToolUseBlock):
-            tool_str = tool_to_str(block, persona_instance)
-            if tool_str:
-                text_parts.append(tool_str)
-        else:
-            text_parts.append(str(block))
-    return '\n'.join(text_parts) if text_parts else None
 
 
 class ClaudeCodePersona(BasePersona):
@@ -98,7 +22,7 @@ class ClaudeCodePersona(BasePersona):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._printed_todowrite_blocks = set()
+        self.template_mgr = ClaudeCodeTemplateManager(self)
 
     @property
     def defaults(self) -> PersonaDefaults:
@@ -106,18 +30,37 @@ class ClaudeCodePersona(BasePersona):
         return PersonaDefaults(
             name="Claude",
             avatar_path=AVATAR_PATH,
-            description="Claude Code",
+            description="Claude Code persona",
             system_prompt="...",
         )
-    
+
     async def _process_response_message(self, message_iterator) -> AsyncIterator[str]:
-        """Process response messages from Claude Code SDK."""
-        async for response_message in message_iterator:
-            self.log.info(str(response_message))
-            if isinstance(response_message, AssistantMessage):
-                msg_str = claude_message_to_str(response_message, self)
-                if msg_str is not None:
-                    yield msg_str + '\n\n'
+        """Process response messages with template updates."""
+        has_content = False
+        template_was_used = False
+
+        async for message in message_iterator:
+            self.log.info(str(message))
+            if isinstance(message, AssistantMessage):
+                result = await self.template_mgr.claude_message_to_str(message)
+                # Template now handles everything - never stream individual components
+                if self.template_mgr.active:
+                    template_was_used = True
+                elif result is not None:
+                    # Only for messages without any tool usage (rare)
+                    has_content = True
+                    yield result + "\n\n"
+
+        # Complete template if active
+        if self.template_mgr.active:
+            await self.template_mgr.complete()
+            template_was_used = True
+
+        # Always yield something to complete the stream
+        if template_was_used:
+            yield ""  # Empty yield to signal completion when template handled everything
+        elif not has_content:
+            yield ""  # Ensure stream completes for empty responses
 
     def _generate_prompt(self, message: Message) -> str:
         attachment_ids = message.attachments
@@ -128,33 +71,153 @@ class ClaudeCodePersona(BasePersona):
         prompt = f"{message.body}\n\n"
         prompt += f"The user has attached the following files and may be referring to them in the above prompt:\n\n"
         for a in msg_attachments:
-            if a['type'] == 'file':
+            if a["type"] == "file":
                 prompt += f"file_path={a['value']}"
-            elif a['type'] == 'notebook':
-                cells = list(c['id'] for c in a['cells'])
+            elif a["type"] == "notebook":
+                cells = list(c["id"] for c in a["cells"])
                 # Claude Code's notebook tools only understand a single cell_id
                 prompt += f"notebook_path={a['value']} cell_id={cells[0]}"
         self.log.info(prompt)
         return prompt
 
+    @functools.cache
+    def _get_mcp_servers_config(
+        self,
+    ) -> tuple[Dict[str, McpHttpServerConfig], List[str]]:
+        """
+        Auto-detect and configure MCP servers from Jupyter Server extensions.
+
+        Checks if jupyter_server_mcp extension is available and adds it
+        to the MCP server configuration along with allowed tools.
+
+        Returns:
+            Tuple of (mcp_servers_config, allowed_tools_list)
+        """
+        mcp_servers = {}
+        allowed_tools = []
+        # Check if jupyter_server_mcp extension is loaded
+        try:
+            server_app = ServerApp.instance()
+
+            # Look for the MCP extension in the server app's extension manager
+            if hasattr(server_app, "extension_manager"):
+                extensions = server_app.extension_manager.extensions
+
+                # Find jupyter_server_mcp extension
+                mcp_extension = None
+                for ext_name, ext_obj in extensions.items():
+                    if (
+                        ext_name == "jupyter_server_mcp"
+                        or ext_obj.__class__.__name__ == "MCPExtensionApp"
+                    ):
+                        mcp_extension = ext_obj.extension_points[
+                            "jupyter_server_mcp"
+                        ].app
+                        break
+
+                if mcp_extension and hasattr(mcp_extension, "mcp_server_instance"):
+                    # Extension is loaded and has an MCP server instance
+                    mcp_server = mcp_extension.mcp_server_instance
+                    if mcp_server:
+                        # Configure MCP server connection
+                        host = getattr(mcp_server, "host", "localhost")
+                        port = getattr(mcp_server, "port", 3001)
+                        name = getattr(mcp_server, "name", "Jupyter MCP Server")
+
+                        server_config: McpHttpServerConfig = {
+                            "type": "http",
+                            "url": f"http://{host}:{port}/mcp",
+                        }
+
+                        mcp_servers[name] = server_config
+
+                        # Get available tools from the MCP server
+                        if (
+                            hasattr(mcp_server, "_registered_tools")
+                            and mcp_server._registered_tools
+                        ):
+                            # Add all tools from this server to allowed_tools
+                            # Format: mcp__<serverName>__<toolName>
+                            server_name_clean = name.replace(" ", "_").replace("-", "_")
+                            for tool_name in mcp_server._registered_tools.keys():
+                                allowed_tool = f"mcp__{server_name_clean}__{tool_name}"
+                                allowed_tools.append(allowed_tool)
+
+                            self.log.info(
+                                f"Auto-configured MCP server: {name} at {server_config['url']} with {len(mcp_server._registered_tools)} tools"
+                            )
+                            self.log.debug(f"Allowed tools: {allowed_tools}")
+                        else:
+                            # If no specific tools, allow all tools from the server
+                            server_name_clean = name.replace(" ", "_").replace("-", "_")
+                            allowed_tools.append(f"mcp__{server_name_clean}")
+                            self.log.info(
+                                f"Auto-configured MCP server: {name} at {server_config['url']} (allowing all tools)"
+                            )
+
+        except Exception as e:
+            self.log.error(f"Could not auto-detect MCP server: {e}")
+
+        return mcp_servers, allowed_tools
+
+    def _get_system_prompt(self):
+        """Get the system prompt for Claude Code options."""
+        return (
+            "I am Claude Code, an AI assistant with access to development tools. "
+            "When formatting responses, I use **bold text** for emphasis and section headers instead of markdown headings (# ## ###). "
+            "I keep formatting clean and readable without large headers. "
+            "For complex tasks requiring multiple steps (3+ actions), I proactively create a todo list using TodoWrite to track progress and keep the user informed of my plan."
+        )
+
     async def process_message(self, message: Message) -> None:
         """Process incoming message and stream Claude Code response."""
-        self._printed_todowrite_blocks.clear()
-        async_gen = None
-        prompt = self._generate_prompt(message)
+        # Always set writing state at the start
+        self.awareness.set_local_state_field("isWriting", True)
+
+        self.template_mgr.reset()
+
         try:
-            async_gen = query(
-                prompt=prompt,
-                options=ClaudeCodeOptions(
-                    max_turns=20,
-                    cwd=self.get_workspace_dir(),
-                    permission_mode='bypassPermissions'
-                )
-            )
+            # Configure Claude Code - use workspace dir for better working directory detection
+            chat_dir = self.get_chat_dir()
+            workspace_dir = self.get_workspace_dir()
+
+            # Prefer workspace dir if available, fallback to chat dir
+            working_dir = chat_dir if chat_dir else workspace_dir
+
+            self.log.info(f"Chat directory: {chat_dir}")
+            self.log.info(f"Workspace directory: {workspace_dir}")
+            self.log.info(f"Using working directory: {working_dir}")
+
+            # Auto-detect and configure MCP servers and allowed tools
+            mcp_servers, mcp_allowed_tools = self._get_mcp_servers_config()
+
+            options = {
+                "max_turns": 50,
+                "cwd": working_dir,
+                "permission_mode": "bypassPermissions",
+                "system_prompt": self._get_system_prompt(),
+                "mcp_servers": mcp_servers,
+                "allowed_tools": mcp_allowed_tools,
+            }
+
+            # Generate prompt from current message
+            user_prompt = self._generate_prompt(message)
+
+            # Stream response directly with prompt
+            async_gen = query(prompt=user_prompt, options=ClaudeCodeOptions(**options))
+
+            # Use stream_message to handle the streaming
             await self.stream_message(self._process_response_message(async_gen))
+
         except Exception as e:
-            self.log.error(f"Error in process_message: {e}")
-            await self.send_message(f"Sorry, I have had an internal error while working on that: {e}")
+            self.log.error(f"Error: {e}")
+            if self.template_mgr.active:
+                await self.template_mgr.complete()
+
+            try:
+                await self.send_message(f"Sorry, error: {e}")
+            except TypeError:
+                self.send_message(f"Sorry, error: {e}")
         finally:
-            if async_gen is not None:
-                await async_gen.aclose()
+            # Always clear writing state when done
+            self.awareness.set_local_state_field("isWriting", False)
