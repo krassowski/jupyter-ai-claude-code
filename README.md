@@ -5,6 +5,7 @@ Jupyter AI integration with Claude Code persona for enhanced development capabil
 ## Features
 
 - **Claude Code Integration**: Full Claude Code persona for Jupyter AI
+- **Continuous Conversation**: Maintains conversation context across multiple messages
 - **Development Tools**: Access to Claude Code's built-in development tools
 - **Seamless Integration**: Works with existing Jupyter AI workflow
 - **Template Management**: Interactive task progress tracking and updates
@@ -54,6 +55,30 @@ This will start JupyterLab with the Jupyter AI extension and Claude Code persona
 2. Open the Jupyter AI chat panel
 3. Select "Claude" persona
 4. Interact with Claude Code's development tools
+
+#### Continuous Conversation
+
+The Claude Code persona now supports continuous conversation, which maintains context across multiple messages in a chat session. This allows Claude to:
+- Remember previous questions and answers
+- Build upon earlier context in the conversation
+- Provide more coherent multi-turn interactions
+
+**Session Management:**
+
+The persona automatically manages conversation sessions. Each time you send a message, it's added to the ongoing conversation context. If you want to reset the conversation and start fresh, you can programmatically call:
+
+```python
+# From within the ClaudeCodePersona instance
+await persona.reset_conversation()
+```
+
+This will clear the conversation history and start a new session with the next message.
+
+**How it works:**
+
+- The first message automatically creates a new `ClaudeSDKClient` session
+- Subsequent messages reuse the same client to maintain conversation context
+- The client persists until you explicitly reset it or the JupyterLab session ends
 
 ### Build the Package
 
