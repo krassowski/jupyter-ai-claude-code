@@ -29,7 +29,6 @@ class ClaudeCodePersona(BasePersona):
         super().__init__(*args, **kwargs)
         self.template_mgr = ClaudeCodeTemplateManager(self)
         self._client: Optional[ClaudeSDKClient] = None
-        self._printed_todowrite_blocks = set()
 
     async def connect(
         self, options: Optional[ClaudeCodeOptions] = None
