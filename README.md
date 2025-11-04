@@ -17,6 +17,7 @@ This project uses [pixi.sh](https://pixi.sh) for dependency management and envir
 ### Prerequisites
 
 Install pixi.sh:
+
 ```bash
 curl -fsSL https://pixi.sh/install.sh | bash
 ```
@@ -24,20 +25,17 @@ curl -fsSL https://pixi.sh/install.sh | bash
 ### Installation
 
 1. Clone the repository:
+
 ```bash
 git clone <repository-url>
 cd jupyter-ai-claude-code
 ```
 
-2. Install dependencies and set up the environment:
-```bash
-pixi install
-```
+2. Enter the pixi shell environment:
 
-This will:
-- Install JupyterLab from conda-forge
-- Install Jupyter AI 3.0.0b5 from PyPI
-- Install the package in editable mode
+```bash
+pixi shell
+```
 
 ## Usage
 
@@ -59,30 +57,25 @@ This will start JupyterLab with the Jupyter AI extension and Claude Code persona
 #### Continuous Conversation
 
 The Claude Code persona now supports continuous conversation, which maintains context across multiple messages in a chat session. This allows Claude to:
+
 - Remember previous questions and answers
 - Build upon earlier context in the conversation
 - Provide more coherent multi-turn interactions
 
 **Session Management:**
 
-The persona automatically manages conversation sessions. Each time you send a message, it's added to the ongoing conversation context. If you want to reset the conversation and start fresh, you can programmatically call:
-
-```python
-# From within the ClaudeCodePersona instance
-await persona.reset_conversation()
-```
-
-This will clear the conversation history and start a new session with the next message.
+The persona automatically manages conversation sessions. Each time you send a message,
+it's added to the ongoing conversation context.
 
 **How it works:**
 
-- The first message automatically creates a new `ClaudeSDKClient` session
-- Subsequent messages reuse the same client to maintain conversation context
-- The client persists until you explicitly reset it or the JupyterLab session ends
+- The first message automatically creates a new `ClaudeSDKClient` session.
+- Subsequent messages reuse the same client to maintain conversation context.
+- The client persists until you start a new session in the chat window.
 
 ### Build the Package
 
-The package is automatically installed in editable mode during `pixi install`. To manually build:
+The package is automatically installed in editable mode during `pixi shell`. To manually build:
 
 ```bash
 pixi run python -m build

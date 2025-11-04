@@ -31,7 +31,9 @@ class ClaudeCodePersona(BasePersona):
         self._client: Optional[ClaudeSDKClient] = None
         self._printed_todowrite_blocks = set()
 
-    async def connect(self, options: Optional[ClaudeCodeOptions] = None) -> ClaudeSDKClient:
+    async def connect(
+        self, options: Optional[ClaudeCodeOptions] = None
+    ) -> ClaudeSDKClient:
         """
         Initialize and connect a new ClaudeSDKClient for continuous conversation.
 
@@ -42,7 +44,9 @@ class ClaudeCodePersona(BasePersona):
             The connected ClaudeSDKClient instance
         """
         if self._client is not None:
-            self.log.warning("Client already connected. Use reset_conversation() to start fresh.")
+            self.log.warning(
+                "Client already connected. Use reset_conversation() to start fresh."
+            )
             return self._client
 
         self._client = ClaudeSDKClient(options=options)
@@ -50,29 +54,9 @@ class ClaudeCodePersona(BasePersona):
         self.log.info("ClaudeSDKClient connected for continuous conversation")
         return self._client
 
-    async def disconnect(self) -> None:
-        """
-        Disconnect the current ClaudeSDKClient and clear conversation state.
-        """
-        if self._client is not None:
-            try:
-                await self._client.disconnect()
-                self.log.info("ClaudeSDKClient disconnected")
-            except Exception as e:
-                self.log.error(f"Error disconnecting client: {e}")
-            finally:
-                self._client = None
-
-    async def reset_conversation(self) -> None:
-        """
-        Reset the conversation by disconnecting and clearing the client.
-        The next message will create a fresh conversation.
-        """
-        await self.disconnect()
-        self._printed_todowrite_blocks.clear()
-        self.log.info("Conversation reset - next message will start a new conversation")
-
-    async def _get_or_create_client(self, options: ClaudeCodeOptions) -> ClaudeSDKClient:
+    async def _get_or_create_client(
+        self, options: ClaudeCodeOptions
+    ) -> ClaudeSDKClient:
         """
         Get the existing client or create a new one with the given options.
 
