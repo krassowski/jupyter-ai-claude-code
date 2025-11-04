@@ -43,9 +43,7 @@ class ClaudeCodePersona(BasePersona):
             The connected ClaudeSDKClient instance
         """
         if self._client is not None:
-            self.log.warning(
-                "Client already connected. Use reset_conversation() to start fresh."
-            )
+            self.log.warning("Client already connected")
             return self._client
 
         self._client = ClaudeSDKClient(options=options)
