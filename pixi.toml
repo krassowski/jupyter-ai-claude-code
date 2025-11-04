@@ -15,7 +15,7 @@ hatchling = "*"
 [pypi-dependencies]
 claude-code-sdk = ">=0.0.25"
 jupyterlab = ">=4.4.0"
-jupyter_server = ">=2.4.0,<3"
+jupyter_server = ">=2.4.0"
 jupyterlab-chat = ">=0.18.2"
 jupyter-ai-persona-manager = ">=0.0.4"
 jupyter-ai-claude-code = { path = ".", editable = true }
