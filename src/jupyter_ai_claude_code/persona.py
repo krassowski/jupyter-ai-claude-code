@@ -1,11 +1,16 @@
 import os
-from typing import Dict, List, AsyncIterator
+from typing import Dict, List, AsyncIterator, Optional
 import functools
 
 from jupyter_ai_persona_manager import BasePersona, PersonaDefaults
 from jupyterlab_chat.models import Message
 
-from claude_code_sdk import query, ClaudeCodeOptions, AssistantMessage
+from claude_code_sdk import (
+    query,
+    ClaudeCodeOptions,
+    AssistantMessage,
+    ClaudeSDKClient,
+)
 from claude_code_sdk.types import McpHttpServerConfig
 
 
@@ -23,6 +28,44 @@ class ClaudeCodePersona(BasePersona):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.template_mgr = ClaudeCodeTemplateManager(self)
+        self._client: Optional[ClaudeSDKClient] = None
+
+    async def connect(
+        self, options: Optional[ClaudeCodeOptions] = None
+    ) -> ClaudeSDKClient:
+        """
+        Initialize and connect a new ClaudeSDKClient for continuous conversation.
+
+        Args:
+            options: Optional ClaudeCodeOptions to configure the client
+
+        Returns:
+            The connected ClaudeSDKClient instance
+        """
+        if self._client is not None:
+            self.log.warning("Client already connected")
+            return self._client
+
+        self._client = ClaudeSDKClient(options=options)
+        await self._client.connect()
+        self.log.info("ClaudeSDKClient connected for continuous conversation")
+        return self._client
+
+    async def _get_or_create_client(
+        self, options: ClaudeCodeOptions
+    ) -> ClaudeSDKClient:
+        """
+        Get the existing client or create a new one with the given options.
+
+        Args:
+            options: ClaudeCodeOptions to configure the client
+
+        Returns:
+            The ClaudeSDKClient instance
+        """
+        if self._client is None:
+            await self.connect(options)
+        return self._client
 
     @property
     def defaults(self) -> PersonaDefaults:
@@ -191,20 +234,24 @@ class ClaudeCodePersona(BasePersona):
             # Auto-detect and configure MCP servers and allowed tools
             mcp_servers, mcp_allowed_tools = self._get_mcp_servers_config()
 
-            options = {
-                "max_turns": 50,
-                "cwd": working_dir,
-                "permission_mode": "bypassPermissions",
-                "system_prompt": self._get_system_prompt(),
-                "mcp_servers": mcp_servers,
-                "allowed_tools": mcp_allowed_tools,
-            }
+            options = ClaudeCodeOptions(
+                max_turns=50,
+                cwd=working_dir,
+                permission_mode="bypassPermissions",
+                system_prompt=self._get_system_prompt(),
+                mcp_servers=mcp_servers,
+                allowed_tools=mcp_allowed_tools,
+            )
 
             # Generate prompt from current message
             user_prompt = self._generate_prompt(message)
 
-            # Stream response directly with prompt
-            async_gen = query(prompt=user_prompt, options=ClaudeCodeOptions(**options))
+            # Get or create the client for continuous conversation
+            client = await self._get_or_create_client(options)
+
+            # Send the query and get response iterator
+            await client.query(prompt=user_prompt)
+            async_gen = client.receive_response()
 
             # Use stream_message to handle the streaming
             await self.stream_message(self._process_response_message(async_gen))

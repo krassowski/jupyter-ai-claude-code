@@ -9,14 +9,13 @@ version = "0.1.0"
 start = "jupyter lab"
 
 [dependencies]
-jupyterlab = ">=4.4.0,<4.5"
-python = ">=3.8"
+python = ">=3.9"
 hatchling = "*"
 
 [pypi-dependencies]
-jupyter-ai = ">=3.0.0b5"
-jupyter-ai-magics = ">=3.0.0b5"
-claude-code-sdk = "*"
-jupyter_server_documents = "*"
+claude-code-sdk = ">=0.0.25"
+jupyterlab = ">=4.4.0"
+jupyter_server = ">=2.4.0"
+jupyterlab-chat = ">=0.18.2"
+jupyter-ai-persona-manager = ">=0.0.4"
 jupyter-ai-claude-code = { path = ".", editable = true }
-
